@@ -31,9 +31,10 @@ impl ElementSink {
     fn increment_and_cycle(&mut self) -> Result<(), std::io::Error> {
         self.num_elements += 1;
         if self.num_elements >= Self::MAX_ELEMENTS_COUNT {
-            self.writer.flush()?;
             let f = File::create(Self::new_file_path(&self.filenum))?;
-            self.writer = GzEncoder::new(BufWriter::new(f), Compression::fast());
+            let mut writer = GzEncoder::new(BufWriter::new(f), Compression::fast());
+            std::mem::swap(&mut writer, &mut self.writer);
+            writer.finish()?.flush()?;
             self.num_elements = 0;
         }
         Ok(())
@@ -121,8 +122,8 @@ fn main() -> anyhow::Result<()> {
 
     {
         let mut pool = sinkpool.lock().unwrap();
-        for sink in pool.iter_mut() {
-            sink.writer.flush()?;
+        for sink in pool.drain(..) {
+            sink.writer.finish()?.flush()?;
         }
     }
     Ok(())
