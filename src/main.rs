@@ -2,12 +2,14 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::sync::{Arc, Mutex};
 
+use flate2::write::GzEncoder;
+use flate2::Compression;
 use osmpbf::{BlobDecode, BlobReader, DenseNode, Element, Node, Relation, Way};
 use rayon::prelude::*;
 
 #[derive(Debug)]
 struct ElementSink {
-    writer: BufWriter<File>,
+    writer: GzEncoder<BufWriter<File>>,
     num_elements: u64,
     filenum: Arc<Mutex<u64>>,
 }
@@ -17,7 +19,7 @@ impl ElementSink {
 
     fn new(filenum: Arc<Mutex<u64>>) -> Result<Self, std::io::Error> {
         let f = File::create(Self::new_file_path(&filenum))?;
-        let writer = BufWriter::new(f);
+        let writer = GzEncoder::new(BufWriter::new(f), Compression::fast());
 
         Ok(ElementSink {
             writer,
@@ -26,9 +28,20 @@ impl ElementSink {
         })
     }
 
+    fn increment_and_cycle(&mut self) -> Result<(), std::io::Error> {
+        self.num_elements += 1;
+        if self.num_elements >= Self::MAX_ELEMENTS_COUNT {
+            self.writer.flush()?;
+            let f = File::create(Self::new_file_path(&self.filenum))?;
+            self.writer = GzEncoder::new(BufWriter::new(f), Compression::fast());
+            self.num_elements = 0;
+        }
+        Ok(())
+    }
+
     fn new_file_path(filenum: &Arc<Mutex<u64>>) -> String {
         let mut num = filenum.lock().unwrap();
-        let path = format!("elements_{:05}.txt", num);
+        let path = format!("elements_{:05}.txt.gz", num);
         *num += 1;
         path
     }
@@ -51,17 +64,6 @@ impl ElementSink {
     fn add_relation(&mut self, relation: &Relation) -> Result<(), std::io::Error> {
         writeln!(self.writer, "relation {}", relation.id())?;
         self.increment_and_cycle()
-    }
-
-    fn increment_and_cycle(&mut self) -> Result<(), std::io::Error> {
-        self.num_elements += 1;
-        if self.num_elements >= Self::MAX_ELEMENTS_COUNT {
-            self.writer.flush()?;
-            let f = File::create(Self::new_file_path(&self.filenum))?;
-            self.writer = BufWriter::new(f);
-            self.num_elements = 0;
-        }
-        Ok(())
     }
 }
 
